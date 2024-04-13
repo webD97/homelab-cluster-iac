@@ -1,0 +1,135 @@
+# code: language=yaml
+variant: fcos
+version: 1.5.0
+
+passwd:
+  users:
+    - name: ${ssh_admin_username}
+      groups: ["wheel", "sudo", "systemd-journal"]
+      ssh_authorized_keys:
+        - ${ssh_authorized_key}
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: ${hostname}
+
+    - path: /etc/vconsole.conf
+      mode: 0644
+      contents:
+        inline: KEYMAP=${keymap}
+
+    - path: /etc/yum.repos.d/rancher-k3s-common.repo
+      mode: 0644
+      contents:
+        inline: |
+          [rancher-k3s-common-stable]
+          name=Rancher K3s Common (stable)
+          baseurl=https://rpm.rancher.io/k3s/stable/common/centos/8/noarch
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=0
+          gpgkey=https://rpm.rancher.io/public.key
+
+    - path: /usr/local/bin/k3s
+      overwrite: true
+      mode: 0755
+      contents:
+        source: "${k3s_download_url}"
+        verification:
+          hash: "${k3s_download_hash}"
+
+    - path: /etc/rancher/k3s/kubelet.config
+      mode: 0640
+      contents:
+        inline: |
+          ${indent(10, kubelet_config)}
+
+    - path: /etc/rancher/k3s/config.yaml
+      mode: 0644
+      contents:
+        inline: |
+          kubelet-arg:
+            - "--config=/etc/rancher/k3s/kubelet.config"
+            - "--feature-gates=GracefulNodeShutdown=true"
+
+    - path: /etc/profile.d/kubectl.sh
+      mode: 0755
+      contents:
+        inline: |
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          test -f /usr/local/bin/k3s && source <(kubectl completion bash)
+
+    - path: /etc/rancher/k3s/agent-token
+      mode: 0600
+      contents:
+        inline: "${agent_token}"
+
+    - path: /etc/systemd/system/k3s.env
+      mode: 0644
+      contents:
+        inline: |
+          K3S_URL=${controlplane_node_0_address}
+          K3S_TOKEN_FILE=/etc/rancher/k3s/agent-token
+
+    - path: /etc/zincati/config.d/99-update-strategy.toml
+      mode: 0644
+      contents:
+        inline: |
+          ${indent(10, zincati_update_strategy)}
+
+  links:
+    - path: /usr/local/bin/kubectl
+      target: /usr/local/bin/k3s
+
+systemd:
+  units:
+    - name: "install-os-extensions.service"
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install k3s dependencies
+        Wants=network-online.target
+        After=network-online.target
+        Before=zincati.service k3s.service
+        ConditionPathExists=!/var/lib/%N.stamp
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=rpm-ostree install --allow-inactive --assumeyes --reboot container-selinux selinux-policy-base k3s-selinux qemu-guest-agent ${join(" ", os_extensions_rpm_names)}
+        ExecStart=/bin/touch /var/lib/%N.stamp
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: "k3s.service"
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Run K3s
+        Wants=network-online.target rpc-statd.service
+        After=network-online.target rpc-statd.service
+
+        [Service]
+        Type=notify
+        EnvironmentFile=-/etc/default/%N
+        EnvironmentFile=-/etc/sysconfig/%N
+        EnvironmentFile=-/etc/systemd/system/%N.env
+        KillMode=process
+        Delegate=yes
+        LimitNOFILE=1048576
+        LimitNPROC=infinity
+        LimitCORE=infinity
+        TasksMax=infinity
+        TimeoutStartSec=0
+        Restart=always
+        RestartSec=5s
+        ExecStartPre=-/sbin/modprobe br_netfilter
+        ExecStartPre=-/sbin/modprobe overlay
+        ExecStart=/usr/local/bin/k3s agent
+
+        [Install]
+        WantedBy=multi-user.target
