@@ -62,7 +62,6 @@ storage:
           disable-network-policy: true
           disable-kube-proxy: true
           
-          
           disable:
             - traefik
             - servicelb
@@ -256,7 +255,7 @@ systemd:
       contents: |
         [Unit]
         Description=Mount k3s server directory
-        Before=k3s.service
+        RequiredBy=k3s.service
 
         [Mount]
         What=${etcd_nfs_host}:${etcd_nfs_path}
