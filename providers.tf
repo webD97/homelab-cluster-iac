@@ -10,7 +10,7 @@ terraform {
     }
     ignition = {
       source  = "community-terraform-providers/ignition"
-      version = "2.3.3"
+      version = "2.3.4"
     }
     local = {
       source  = "hashicorp/local"
